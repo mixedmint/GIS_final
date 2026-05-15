@@ -1,0 +1,573 @@
+---
+title: "student number: 25039479"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+## Originality declaration
+
+I, [**Ruijue Song**], confirm that the work presented in this assessment
+is my own. Where information has been derived from other sources, I
+confirm that this has been indicated in the work.
+
+I used Gemini to help me with data analysis, and I will specifically
+mark the places where I used it.
+
+And I have extra time of Reasonable Academic Adjustments.
+
+## Initial project scope
+
+### Background
+
+The gambling market in the UK is substantial, generating £14.2 billion
+in 2020. The associated gambling-related harms are increasingly viewed
+as a critical public health issue rather than merely a leisure activity.
+In response to the growing scale of gambling harms, the UK Government
+published the White Paper **"High stakes: gambling reform for the
+digital age"** in 27 April 2023. This White Paper prioritized protecting
+**vulnerable people** (e.g., children and young adults) from gambling
+harms. Despite the legislative focus and the gambling-related harm
+review in 2023, the spatial dimension of gambling harms is not taken
+into consideration, such as whether the betting stores (bookmakers)
+physically cluster in vulnerable communities.
+
+Consequently, the bookmakers dataset extracted from OSM data provides a
+critical window into the spatial distribution patterns. Acting as a
+consultant of Greater London Authority (GLA), this report seeks to
+understand what are the spatial patterns of gambling density in London,
+thereby providing the missing spatial analysis to inform local licensing
+and planning decisions.
+
+### Research question and hypothesis
+
+**Research question:** What are the spatial patterns of betting
+stores(bookmakers) in London in 2025? Do they form statistically
+significant high-density zones similar to one another (hotspots)?
+
+**Hypothesis:**
+
+-   $H_1$ (Alternative Hypothesis): Betting stores in London in 2025 are
+    not randomly distributed but exhibit significant spatial clustering,
+    with certain districts experiencing disproportionately high density
+    compared to others. And there are hotspot zones in London.
+
+-   $H_0$ (Null Hypothesis): Betting stores in London in 2025 are
+    randomly distributed without showing any hotspot zones.
+
+### Evaluation of research datasets
+
+**dataset**: Bookmakers dataset extracted from OSM data
+
+-   **Source &Nature:** Provide by OSM data, the dataset contains
+    polygons of bookmakers locations in London, which has to be
+    transformed into point data for following density calculation.
+
+-   **CRS:** The raw data is in WGS 84(EPSG:4326). A key pre-processing
+    step will involve transforming this to British National Grid
+    (EPSG:27700) to enable valid metric spatial operations (e.g.,
+    calculating density per $km^2$).
+
+-   **Collection Method:** The dataset is extracted from **OpenStreetMap
+    (OSM)**, which is a collaborative project where data is created and
+    maintained by volunteers. Unlike official administrative registers
+    (e.g., from the UK Gambling Commission), this dataset relies on
+    **crowdsourced contributions**. As a crowdsourced dataset, it s
+    subject to contributor bias and temporal lag. There is no guarantee
+    that every betting store in London has been mapped. Newly opened
+    stores could be missing and permanently closed shops may not have
+    been deleted.
+
+-   **Representation:** OSM coverage is often better in densely
+    populated or affluent areas where more active contributors reside.
+    Consequently, betting shops in deprived peripheral areas might be
+    slightly underrepresented.
+
+### Explanation of the data wrangling to undertake
+
+1.  **CRS Transforming:** All spatial datasets (OSM bookmaker points,
+    MSOA boundaries, London boundary) will be transformed to the British
+    National Grid (EPSG: 27700), which is essential for accurate area
+    calculations (required for density) and spatial distance
+    measurements, avoiding distortions inherent in the raw WGS84
+    geographic system.
+
+2.  **Data Cleaning:** Remove the duplicates in bookmaker points dataset
+    and select the related columns for following analysis.
+
+3.  **Spatial Subsetting:** The OSM bookmaker points will be filtered to
+    retain only those falling strictly within the study area (London
+    MSOAs boundaries). This step is necessary to remove extraneous data
+    points located in the corners of the bounding box, ensuring the
+    analysis is strictly confined to the GLA jurisdiction.
+
+4.  **Data Aggregation:** This is the most critical step. Betting shop
+    points will be spatially joined to the MSOA polygons to calculate a
+    raw count per spatial unit and these counts will be converted to
+    density. Normalising by area is vital to mitigate the Scale Effect
+    of the Modifiable Areal Unit Problem (MAUP). Without this,
+    physically larger MSOAs in outer London might artificially seem to
+    have more gambling issues simply due to their size.
+
+### Justified plan for the spatial data analysis that will be required
+
+1.  **Kernel Density Estimation (KDE):** Visualising Intensity
+
+We firstly generate a KDE surface to from the cleaning betting shop
+points to identify the intensity in London, which could provide us with
+a initial understanding of bookmakers distribution and intensity.
+
+2.  **Global Moran's I:** Testing for Global Clustering in London
+
+Following data aggregation to MSOAs, the Global Moran’s I statistic will
+be calculated for betting stores density.
+
+Visual patterns in KDE can be vague and misleading. To rigorously answer
+the research question, we must statistically test against the Null
+Hypothesis of Complete Spatial Randomness (CSR). Global Moran's I is the
+appropriate statistic for areal data (MSOAs) to quantify whether there
+is clustering across the entire city, confirming if the observed
+patterns are systematic rather than random noise.
+
+3.  **Getis Ord** $G_i^*$: Identifying Local Hotspots
+
+While Global Moran's I confirms if clustering exists in London, it
+cannot tell us where. Getis Ord $G_i^*$ is specifically selected over
+other local indicators (like Local Moran's I) because it explicitly
+identifies "High-High" clusters (high density surrounded by high
+density). This directly answers the second part of the research
+question: "where are significant hotspots?". It also provides actionable
+evidence for identifying specific neighbourhoods where gambling
+availability has reached saturation levels, potentially requiring policy
+intervention.
+
+### Constraints & Limitations
+
+1.  Data Reliability
+
+The betting shop data is sourced from OpenStreetMap (OSM), which is
+Volunteered Geographic Information. It may suffer from completeness
+bias, where shops in less active contributor areas (often peripheral or
+deprived) are under-mapped, potentially leading to an underestimation of
+the density in the very areas of interest.
+
+2.  The Modifiable Areal Unit Problem (MAUP)
+
+The analysis relies on aggregating points to MSOAs. The results (e.g.,
+identified hotspots) are dependent on these specific administrative
+boundaries. Using different scales (e.g., boroughs) could yield
+different clustering patterns or spatial correlations.
+
+## Data Pre-processing
+
+```{r}
+library(tidyverse)
+library(sf)
+library(tmap)
+library(ggplot2)
+library(janitor)
+library(osmdata)
+library(spatstat) # Point Pattern Analysis (KDE)
+library(spdep) # Spatial statistics (Global Moran's I and Local Getis Ord Gi)
+```
+
+### Data Loading
+
+1.  Loading the MSOA boundary data Due to GitHub's file size limits
+    (\>50MB), the raw MSOA boundary data is not included in this
+    repository.
+
+    URL of MSOA boudnary:
+    <https://geoportal.statistics.gov.uk/datasets/3b3b1cb15a744855881b1489741b861b_0/about>
+
+```{r}
+MSOAs <- st_read("data/gambling_related_harms_data/Middle_layer_Super_Output_Areas_December_2021_Boundaries_EW_BFE_V8_-1517080999235121072/MSOA_2021_EW_BFE_V8.shp") %>% 
+  st_transform(., 27700) #Ensure it is in British National Grid
+
+st_crs(MSOAs) #Check its crs
+```
+
+2.  Loading London boundary data
+
+URL:
+<https://data.london.gov.uk/download/20od9/114d1137-e339-4b50-b409-124c17f4b59a/gla.zip>
+
+```{r}
+London <- st_read("data/gambling_related_harms_data/gla/London_GLA_Boundary.shp") %>% 
+  st_transform(., 27700)
+
+qtm(London)
+```
+
+Subsetting spatial units (MSOAs) to a study area (London)
+
+```{r}
+  #centroids of MSOAs across UK
+  MSOAs_centroids <- st_centroid(MSOAs)
+
+  #centroids within the London boundary. London is an sf object of the Greater London boundary 
+  London_MSOAs <- MSOAs[st_within(MSOAs_centroids, London, sparse = FALSE), ]
+  
+  qtm(London_MSOAs)
+```
+
+3.  Extracting the bookmakers dataset from OSMs
+
+```{r}
+  Bounding_box <- getbb("London")
+  #check it worked
+  Bounding_box 
+  
+  #get the OSM data within the bounding box
+  OSM_bookmaker <- Bounding_box %>%
+  opq() %>%
+  add_osm_feature(key = "shop", value = "bookmaker")%>%
+  osmdata_sf()
+  
+  #extract the polygons of bookmakers
+  bookmakers<-OSM_bookmaker$osm_polygons
+  
+  #convert to points
+  bookmaker_points <- st_centroid(bookmakers)
+```
+
+```{r}
+# CRS transforming for bookmaker points to British National Grid
+bookmaker_points <- bookmaker_points %>% 
+  st_transform(., 27700)
+
+st_crs(bookmaker_points)
+```
+
+```{r}
+summary(bookmaker_points)
+```
+
+Let us have a look at the points distribution firstly
+
+```{r}
+tmap_mode("plot")
+
+# Set the base map
+tm_shape(London_MSOAs)+
+  tm_polygons(fill_alpha = 0.3)+
+# Set the bookmakers dots
+tm_shape(bookmaker_points)+
+  tm_dots(fill = "blue", size = 0.2)
+```
+
+It is obvious that some points fall out of the London boundary, and we
+have to remove them by subseeting in data wrangling part.
+
+```{r}
+#chek the column names and datatype list of bookmarker points data
+Datatypelist <- bookmaker_points %>% 
+  st_drop_geometry() %>% 
+  summarise_all(class) %>% 
+  pivot_longer(everything(),
+               names_to = "All_variables",
+               values_to = "Variable_class")
+Datatypelist
+```
+
+Inspection of the dataset structure reveals that a significant number of
+attribute columns contain NA values. As these attributes (e.g., address
+details, opening hours) are not required for the proposed spatial
+density analysis, the dataset will be streamlined.
+
+In the data wrangling stage, we will select only the relevant columns
+(e.g., name or osm_id) and the essential geometry column. This reduces
+computational overhead and ensures a clean dataset for aggregation.
+
+### Data Wrangling
+
+#### 1. Data Cleaning: remove duplicates and select related columns
+
+```{r}
+# First we remove the duplicates in bookmaker points
+bookmaker_points <- bookmaker_points %>% 
+  clean_names() %>% 
+  distinct()
+
+# Then we keep only columns relevant to analysis: osm_id, name and geometry
+bookmaker_selected <- bookmaker_points %>% 
+  select(osm_id, name, geometry) %>% 
+  # This step is to filter out rows with empty geometry (and I asked Gemini how to do it with sf)
+  # Although it is rare in raw OSM data
+  # I still take this step to ensure that subsequent spatial operations do not fail due to corrupt vector data
+  filter(!st_is_empty(geometry)) 
+```
+
+#### 2. Spatial Subsetting
+
+```{r}
+# We remove any points falling outside London
+bookmaker_sub <- bookmaker_selected[London_MSOAs,]
+```
+
+#### 3. Exploratory Mapping: bookmaker points in London
+
+```{r}
+# We plot to double check whether the points out of London removed
+tmap_mode("plot")
+
+tm_shape(London_MSOAs)+
+  tm_polygons(fill_alpha = 0.3)+
+tm_shape(bookmaker_sub)+
+  tm_dots(fill = "blue", size = 0.2)
+```
+
+#### 4. Data Aggregation
+
+Next, we calculates Density (count of betting stores per unit of area).
+This reveals how concentrated the gambling is.
+
+```{r}
+points_sf_joined <- London_MSOAs %>% 
+  clean_names() %>% 
+  # First count points inside polygons
+  # st_intersects returns a list of points found in each polygon
+  # lengths() counts how many points in each unit
+  mutate(n = lengths(st_intersects(., bookmaker_sub))) %>% 
+  # Calculate the area of each spatial unit
+  mutate(area = st_area(.)) %>% 
+  # Calculate the density 
+  # We multiply the density by 1,000,000 to convert it from per 1/m^2 to 1/km^2
+  # Cause at first I used 1/m^2 to plot, find the density is so small (e.g., 0.00000008)
+  # that is hard to read
+  mutate(density = (n/area)*1000000) %>% 
+  # Select related variables
+  select(msoa21cd, msoa21nm, density, n)
+```
+
+We plot a choropleth map of betting stores density in London to perform
+a preliminary visual inspection for potential 'saturation zones' or
+clustering tendencies that warrant further investigation using global
+and local spatial statistics.
+
+```{r}
+points_sf_joined <- points_sf_joined %>% 
+  group_by(msoa21cd) %>% 
+  summarise(density = first(density), msoa21nm = first(msoa21nm), bookmaker_count = first(n))
+
+# Plot the choropleth map of bookmaker density
+tm_shape(points_sf_joined) +
+  tm_polygons(fill = "density",
+              fill.scale = tm_scale_intervals(
+                values = "brewer.blues",
+                style = "jenks"),
+              fill.legend = tm_legend(
+                title = "Bookmaker Density in London",
+                title.size = 0.85,
+                size =0.8,
+                poisson = tm_pos_out(
+                  "right",
+                  "center",
+                  pos.v = "center"
+                )
+              ))
+```
+
+The map rejects a random distribution, revealing a distinct
+core-periphery pattern with the highest densities ($> 5.9$ shops/$km^2$)
+concentrated in Inner London. Significant 'islands' of high density
+appear in suburban hubs (e.g., Croydon，Stratford)-I asked Gemini to
+identify their names because I am not familiar with London districts.
+These potential 'saturation zones' (approaching 9 shops/$km^2$) suggest
+strategic clustering in high-footfall areas. In the context of the
+Public Health England review, these 'saturation zones' represent areas
+of hyper-accessibility, where the risk of gambling-related harm is
+likely elevated due to the concentrated volume of betting opportunities.
+
+While visually suggesting clustering, visual inspection is prone to
+subjectivity. Points pattern and spatial autocorrelation analysis are
+required to statistically confirm if these patterns are significant.
+
+## Data Analysis
+
+### Points Pattern Analysis
+
+####Kernel Density Esitimation (KDE)
+
+**Why KDE is appropriate while Ripley's K is not:** While Ripley's K is
+valuable for quantifying the existence and scale of clustering (Global
+Statistics), it do not identify the location of these clusters. KDE
+shows us WHERE the highest density of betting stores is, which allows
+for the precise geographic identification of 'risk environments' where
+gambling availability is highest. Ripley's K only indicates the scale of
+clustering instead of its specific location.
+
+1.  Defining Observation Window (London boundary)
+
+```{r}
+# Set the London boundary as the window
+window <- as.owin(London)
+plot(window)
+```
+
+2.  Data Conversion (sf $\rightarrow$ ppp) The sf point object
+    (bookmakers) cannot be used directly for density calculation. It
+    must be converted into a Planar Point Pattern (ppp) object, which is
+    the specific format required by the spatstat package.
+
+```{r}
+# Extract the coodinations of bookmakers
+coords <- st_coordinates(bookmaker_sub)
+
+# Converting sf to ppp
+bookmaker_sub.ppp <- ppp(x = coords[,1],
+                         y = coords[,2],
+                          window = window)
+```
+
+3.  KDE
+
+```{r}
+# Run KDE
+bookmaker_sub.ppp %>% 
+  density(., sigma = 1000) %>% 
+  plot()
+```
+
+This KDE surface reveals the continuous 'atmosphere' of gambling
+availability. It identifies a 'hyper-saturated' core (Yellow) and
+distinct polycentric 'flares' in Outer London (Red/Orange). These
+peripheral hotspots (e.g., Croydon, Stratford) confirm that shops are
+not randomly scattered but strategically anchored to high-footfall
+commercial arteries.
+
+### Spatial Autocorrelation
+
+#### Global Moran's I
+
+**Why Global Moran's I is appropriate:** We use Global Moran's I to
+evaluate whether the spatial pattern of betting store density **across
+London (Global)** is clustering. A **Queen’s Contiguity** spatial weight
+matrix was used to conceptualise spatial relationships because it
+captures all touching neighbours (sharing edges or corners). This is
+particularly appropriate for modelling 'risk environments' in London's
+irregular urban fabric, ensuring that the spatial spillover of gambling
+availability across complex administrative intersections is fully
+accounted for.
+
+1.  Defining Wight Matrix: Queen Contiguity
+
+```{r}
+# Create Neighbor List (Queen Contiguity)
+nb <- points_sf_joined %>% 
+  poly2nb(., queen = T)
+
+# Create Spatial Weights List
+lw <- nb %>% 
+  nb2listw(., style = "W", zero.policy = TRUE) # zero.policy=TRUE handles districts (islands) with no neighbors
+```
+
+2.  Global Moran's I
+
+```{r}
+# Run Global Moran's I test
+moranI <- points_sf_joined %>% 
+  pull(density) %>% 
+  as.vector() %>% 
+  moran.test(., lw)
+
+moranI
+```
+
+The Global Moran’s I test yields a Moran’s I statistic of $0.165$ with a
+Z-score (standard deviate) of $9.02$ and a p-value of $< 2.2e-16$,
+revealing a positive spatial autocorrelation (clustering) and rejecting
+the Null Hypothesis (CSR).
+
+The exceptionally high Z-score (9.02) confirms that the observed
+clustering is not random noise, but a structurally significant,
+systematic phenomenon across London. It provides statistical evidence
+supporting the 'predatory clustering' hypothesis, suggesting operators
+systematically co-locate to create continuous 'risk environments' rather
+than distributing randomly. To translate this city-wide finding into
+actionable policy intelligence, a Local Getis-Ord $G_i^*$ analysis is
+required to pinpoint exactly where these hotspots.
+
+#### Local Getis Ord $G_i^*$
+
+**Why Getis Ord** $G_i^*$ is appropriate: We choose Local Getis Ord
+$G_i^*$ over Local Moran's I (LISA) as the study prioritizes identifying
+'hotspot zones' rather than spatial outliers. Informed by the Public
+Health England review, Gi\* specifically detects otspots (high density
+surrounded by high density), which directly corresponds to contiguous
+'risk environments' of hyper-accessibility.Coordinated policy
+intervention is needed in these areas.
+
+1.  Local Getis Ord Gi\*
+
+```{r}
+# Run Local Getis Ord Gi* test
+Gi <- points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  localG(., lw)
+
+head(Gi)
+```
+
+2.  Plot
+
+```{r}
+# Add Gi data to points_sf_joined for plot
+points_sf_joined <- points_sf_joined %>%
+  mutate(density_G = as.numeric(Gi))
+
+# Plot the Gi density map
+tm_shape(points_sf_joined) +
+    tm_polygons(
+      fill = "density_G",
+      fill.scale = tm_scale_intervals(values = "brewer.blues",
+                                      midpoint = "NA",
+                                      style = "jenks"),
+       fill.legend = tm_legend(title="Gi*, Bookmaker Density in London",
+                              title.size=0.85,
+                              size=0.8,
+                              position=tm_pos_out("right", 
+                                                  "center",
+                                                  pos.v = "center")))
+```
+
+The map translates density into statistical certainty, with Gi Z-scores
+peaking at 7.294, indicating these clusters are structurally entrenched
+'hotspot zones' rather than random occurrences. The analysis isolates a
+contiguous inner-London core and distinct polycentric satellite hotspots
+(e.g., Croydon, Stratford). These "islands" of hyper-accessibility
+amidst colder residential areas confirm strategic clustering in
+high-footfall hubs.
+
+Aligning with the Public Health England review, these High-High clusters
+represent "frontline risk environments". This validates the "predatory
+clustering" hypothesis, suggesting operators aggressively concentrate
+supply to maximize cumulative impact. For the GLA, this provides the
+specific evidentiary basis to designate "Cumulative Impact Zones" and
+refuse new licenses in these saturated districts.
+
+## Conclusion & Reflection
+
+#### Policy Implications
+
+Targeting 'Hotspot Zones, the spatial analysis successfully translates
+the abstract concept of "gambling harm" into a concrete instrument for
+policy intervention. Rather than applying a blanket "one-size-fits-all"
+restriction, **policy should be spatially targeted**. In these
+high-density hotspots, the policy should be stricter. New license
+applications should be refused because these areas already have enough
+betting stores. This would help stop the clustering that leads to higher
+risks of gambling harm in these communities.
+
+#### Reflection on Datasets and Methods
+
+1.  **Data Issue:** The betting shop data comes from OpenStreetMap,
+    which is created by volunteers. This might have sampling bias. For
+    example, shops in poorer or outer areas might be missing because
+    fewer volunteers map there.
+
+2.  **Methodological Limits (MAUP):** The results depend on the
+    boundaries we used (MSOAs). This is the Modifiable Areal Unit
+    Problem (MAUP). If we used different zones (like Boroughs), the
+    results might look different.
